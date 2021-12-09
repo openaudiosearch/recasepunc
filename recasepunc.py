@@ -1,3 +1,8 @@
+# Taken from https://github.com/benob/recasepunc
+# License: BSD 3-Clause
+# Copyright Benoit Favre, 2021
+# Adapted by  Nickolay V. Shmyrev
+
 import sys
 import collections
 import os
@@ -18,7 +23,7 @@ from transformers import AutoModel, AutoTokenizer, BertTokenizer
 
 default_config = argparse.Namespace(
     seed=871253,
-    lang='fr',
+    lang='de',
     #flavor='flaubert/flaubert_base_uncased',
     flavor=None,
     max_length=256,
@@ -35,6 +40,9 @@ default_flavors = {
     'fr': 'flaubert/flaubert_base_uncased',
     'en': 'bert-base-uncased',
     'zh': 'ckiplab/bert-base-chinese',
+    'tr': 'dbmdz/bert-base-turkish-uncased',
+    'de': 'dbmdz/bert-base-german-uncased',
+    'pt': 'neuralmind/bert-base-portuguese-cased'
 }
 
 class Config(argparse.Namespace):
@@ -44,7 +52,7 @@ class Config(argparse.Namespace):
         for key, value in kwargs.items():
             setattr(self, key, value)
 
-        assert self.lang in ['fr', 'en', 'zh']
+        assert self.lang in ['fr', 'en', 'zh', 'tr', 'pt', 'de']
 
         if 'lang' in kwargs and ('flavor' not in kwargs or kwargs['flavor'] is None):
             self.flavor = default_flavors[self.lang]
@@ -55,7 +63,7 @@ class Config(argparse.Namespace):
 def init_random(seed):
     # make sure everything is deterministic
     os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
-    torch.use_deterministic_algorithms(True)
+    #torch.use_deterministic_algorithms(True)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     random.seed(seed)
@@ -272,9 +280,11 @@ class CasePuncPredictor:
             self.config = Config(lang=lang, flavor=flavor, device=device)
         init(self.config)
 
-        self.model = Model(flavor, config.device)
+        self.model = Model(self.config.flavor, self.config.device)
+        print("model loaded")
         self.model.load_state_dict(loaded['model_state_dict'])
-        self.model.to(config.device)
+        self.model.eval()
+        self.model.to(self.config.device)
 
         self.rev_case = {b: a for a, b in case.items()}
         self.rev_punc = {b: a for a, b in punctuation.items()}
@@ -301,7 +311,7 @@ class CasePuncPredictor:
             y_pred1 = torch.max(y_scores1, 2)[1]
             y_pred2 = torch.max(y_scores2, 2)[1]
             for i, id, token, punc_label, case_label in zip(range(len(instance)), ids, instance, y_pred1[0].tolist()[:len(instance)], y_pred2[0].tolist()[:len(instance)]):
-                if id == cls_token_id or id == sep_token_id:
+                if id == self.config.cls_token_id or id == self.config.sep_token_id:
                     continue
                 if previous_label != None and previous_label > 1:
                     if case_label in [case['LOWER'], case['OTHER']]: # LOWER, OTHER
@@ -324,6 +334,7 @@ class CasePuncPredictor:
         if token.startswith('##'):
             token = token[2:]
         return token + punctuation_syms[punctuation[punc_label]]
+
 
 
 def generate_predictions(config, checkpoint_path):
@@ -696,40 +707,40 @@ def init(config):
     config.device = torch.device(config.device if torch.cuda.is_available() else 'cpu')
     
 
-def main(config, action, args):
-    init(config)
+# def main(config, action, args):
+#     init(config)
 
-    if action == 'train':
-        train(config, *args)
-    elif action == 'eval':
-        run_eval(config, *args)
-    elif action == 'predict': 
-        generate_predictions(config, *args)
-    elif action == 'tensorize':
-        make_tensors(config, *args)
-    elif action == 'preprocess':
-        preprocess_text(config, *args)
-    else:
-        print('invalid action "%s"' % action)
-        sys.exit(1) 
+#     if action == 'train':
+#         train(config, *args)
+#     elif action == 'eval':
+#         run_eval(config, *args)
+#     elif action == 'predict': 
+#         generate_predictions(config, *args)
+#     elif action == 'tensorize':
+#         make_tensors(config, *args)
+#     elif action == 'preprocess':
+#         preprocess_text(config, *args)
+#     else:
+#         print('invalid action "%s"' % action)
+#         sys.exit(1) 
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument("action", help="train|eval|predict|tensorize|preprocess", type=str)
-    parser.add_argument("action_args", help="arguments for selected action", type=str, nargs='*')
-    parser.add_argument("--seed", help="random seed", default=default_config.seed, type=int)
-    parser.add_argument("--lang", help="language (fr, en, zh)", default=default_config.lang, type=str)
-    parser.add_argument("--flavor", help="bert flavor in transformers model zoo", default=default_config.flavor, type=str)
-    parser.add_argument("--max-length", help="maximum input length", default=default_config.max_length, type=int)
-    parser.add_argument("--batch-size", help="size of batches", default=default_config.batch_size, type=int)
-    parser.add_argument("--device", help="computation device (cuda, cpu)", default=default_config.device, type=str)
-    parser.add_argument("--debug", help="whether to output more debug info", default=default_config.debug, type=bool)
-    parser.add_argument("--updates", help="number of training updates to perform", default=default_config.updates, type=bool)
-    parser.add_argument("--period", help="validation period in updates", default=default_config.period, type=bool)
-    parser.add_argument("--lr", help="learning rate", default=default_config.lr, type=bool)
-    parser.add_argument("--dab-rate", help="drop at boundaries rate", default=default_config.dab_rate, type=bool)
-    config = Config(**parser.parse_args().__dict__)
+# if __name__ == '__main__':
+#     parser = argparse.ArgumentParser()
+#     parser.add_argument("action", help="train|eval|predict|tensorize|preprocess", type=str)
+#     parser.add_argument("action_args", help="arguments for selected action", type=str, nargs='*')
+#     parser.add_argument("--seed", help="random seed", default=default_config.seed, type=int)
+#     parser.add_argument("--lang", help="language (fr, en, zh)", default=default_config.lang, type=str)
+#     parser.add_argument("--flavor", help="bert flavor in transformers model zoo", default=default_config.flavor, type=str)
+#     parser.add_argument("--max-length", help="maximum input length", default=default_config.max_length, type=int)
+#     parser.add_argument("--batch-size", help="size of batches", default=default_config.batch_size, type=int)
+#     parser.add_argument("--device", help="computation device (cuda, cpu)", default=default_config.device, type=str)
+#     parser.add_argument("--debug", help="whether to output more debug info", default=default_config.debug, type=bool)
+#     parser.add_argument("--updates", help="number of training updates to perform", default=default_config.updates, type=bool)
+#     parser.add_argument("--period", help="validation period in updates", default=default_config.period, type=bool)
+#     parser.add_argument("--lr", help="learning rate", default=default_config.lr, type=bool)
+#     parser.add_argument("--dab-rate", help="drop at boundaries rate", default=default_config.dab_rate, type=bool)
+#     config = Config(**parser.parse_args().__dict__)
 
-    main(config, config.action, config.action_args)
+#     main(config, config.action, config.action_args)
 
 
